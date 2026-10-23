@@ -3,6 +3,9 @@
 엑셀 평가지(`2025년 4분기 평가지.xlsx`)로 운영하던 **KPI 평가와 연봉인상률 산출**을 웹 도구로 옮긴 프로젝트입니다.
 팀 실적과 개인 평가를 입력하면 등급, 연봉 수준, 인상률, 인상 연봉이 자동으로 계산됩니다.
 
+**▶ 데모: https://skdownsk-tech.github.io/kpi-evaluation/** (가상 인물 110명 데이터)
+· [계산 엔진 테스트](https://skdownsk-tech.github.io/kpi-evaluation/app/tests.html)
+
 ## 실행 방법
 
 설치할 것이 없습니다.
@@ -54,6 +57,7 @@ app/
   js/app.js       화면 렌더링, 입력 처리, 엑셀 가져오기/내보내기
   tests.html      계산 엔진 테스트 (브라우저에서 열면 실행)
 docs/DESIGN.md    엑셀 분석 결과와 설계
+index.html        GitHub Pages 첫 화면 (app/으로 이동)
 serve.ps1         설치 없이 쓰는 로컬 서버
 ```
 
