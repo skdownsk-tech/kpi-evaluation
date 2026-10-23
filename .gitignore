@@ -1,0 +1,16 @@
+# 실제 평가 데이터는 저장소에 올리지 않는다 (직원 이름·연봉 포함)
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*백업*.json
+*평가결과*
+
+# 개인 설정
+.claude/settings.local.json
+
+# OS / 편집기
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/

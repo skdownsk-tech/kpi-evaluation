@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>계산 엔진 테스트</title>
+  <style>
+    :root { --bg: #fff; --text: #1b1f24; --ok: #1f7a4d; --bad: #c2372f; --muted: #7b8494; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #111418; --text: #e8ebef; --ok: #6fcf9c; --bad: #f08a82; --muted: #8a93a1; } }
+    body { background: var(--bg); color: var(--text); font: 14px/1.6 "Malgun Gothic", system-ui, sans-serif; padding: 24px 16px; max-width: 900px; margin: 0 auto; }
+    .ok { color: var(--ok); } .bad { color: var(--bad); font-weight: 700; } .muted { color: var(--muted); }
+    li { margin: 2px 0; }
+  </style>
+</head>
+<body>
+  <h1>계산 엔진 테스트</h1>
+  <p id="summary"></p>
+  <ul id="out"></ul>
+
+  <script src="js/engine.js"></script>
+  <script src="js/data.js"></script>
+  <script>
+    const E = HR.engine;
+    const S = HR.data.defaultSettings();
+    const results = [];
+
+    function test(name, fn) {
+      try { fn(); results.push({ name, ok: true }); }
+      catch (err) { results.push({ name, ok: false, msg: err.message }); }
+    }
+    function eq(actual, expected, label) {
+      const same = typeof expected === 'number' && typeof actual === 'number'
+        ? Math.abs(actual - expected) < 1e-9
+        : actual === expected;
+      if (!same) throw new Error(`${label || ''} 기대값 ${JSON.stringify(expected)}, 실제값 ${JSON.stringify(actual)}`);
+    }
+
+    // 엑셀 평가지 샘플 대상자 (과장2, 46,000,080원)와 같은 조건의 직원
+    function emp(over) {
+      return Object.assign({
+        id: 'x', level: '과장2', salary: 46000080, lastRaiseDate: '2024-10-21', eligible: true,
+        evaluation: { selfRate: null, headRate: 1.05, finalRate: null },
+        deductions: { late: 0, leave: 0, training: 0 }, vpOverride: null
+      }, over);
+    }
+    const teamG = { rate: 1.05, grade: 'G' };
+
+    test('달성률과 평균: 빈 값은 AVERAGE처럼 건너뜀', () => {
+      eq(E.rate(50, 40), 1.25);
+      eq(E.rate(10, 0), null, '목표 0');
+      eq(E.average([1.2, null]), 1.2);
+      eq(E.average([null, null]), null);
+    });
+
+    test('팀 등급 구간 경계', () => {
+      const g = (v) => E.gradeByScore(v, S.teamBands);
+      eq(g(1.30), 'E'); eq(g(1.2999), 'V'); eq(g(1.21), 'V'); eq(g(1.205), 'G');
+      eq(g(1.00), 'G'); eq(g(0.9999), 'N'); eq(g(0.90), 'N'); eq(g(0.8999), 'P'); eq(g(0.5), 'P');
+      eq(g(121 / 100), 'V', '부동소수 오차');
+    });
+
+    test('개인 등급 구간: N은 80% 이상', () => {
+      const g = (v) => E.gradeByScore(v, S.personalBands);
+      eq(g(0.80), 'N'); eq(g(0.7999), 'P'); eq(g(0.95), 'N');
+    });
+
+    test('팀 평가 = 매출 달성률과 영업이익 달성률의 평균', () => {
+      const t = E.teamResult({ revenueTarget: 100, revenueActual: 130, profitTarget: 20, profitActual: 22 }, S);
+      eq(t.rate, 1.2); eq(t.grade, 'G');
+      const half = E.teamResult({ revenueTarget: 100, revenueActual: 125, profitTarget: null, profitActual: null }, S);
+      eq(half.rate, 1.25, '이익 미입력'); eq(half.grade, 'V');
+    });
+
+    test('종합 등급 매트릭스 (엑셀 표와 동일)', () => {
+      const m = S.combinedMatrix;
+      eq(m.E.G, 'V'); eq(m.E.P, 'G'); eq(m.V.P, 'N'); eq(m.G.E, 'V'); eq(m.N.E, 'G'); eq(m.P.E, 'G'); eq(m.P.P, 'P');
+    });
+
+    test('연봉 수준 구간: 하한 초과 기준', () => {
+      const b = (v) => E.compaBandIndex(v, S.compaBands);
+      eq(b(1.41), 0); eq(b(1.40), 1); eq(b(1.26), 1); eq(b(1.25), 2);
+      eq(b(0.9534), 2); eq(b(0.95), 3); eq(b(0.86), 3); eq(b(0.85), 4); eq(b(0.6), 4);
+    });
+
+    test('엑셀 샘플 재현: 과장2 · 업계평균 48,249,000 · 연봉 수준 95.34%', () => {
+      const r = E.employeeResult(emp(), teamG, S);
+      eq(r.market, 48249000);
+      eq(Math.round(r.compa * 1e6) / 1e6, 0.953389, '연봉 수준');
+      eq(r.personalGrade, 'G'); eq(r.finalGrade, 'G');
+      eq(r.compaBand, 2, '95~125% 구간');
+      eq(r.calcRaise, 0.07);
+      eq(r.newSalary, 49220086, '인상 연봉');
+      eq(r.stayDays, 436, '연봉체류일 (엑셀 K4와 동일)');
+      eq(r.complete, true);
+    });
+
+    test('E등급 · 연봉 수준 85% 이하 → σ15% + 5% = 20%', () => {
+      const team = { rate: 1.4, grade: 'E' };
+      const r = E.employeeResult(emp({ salary: 40000000, evaluation: { headRate: 1.35 } }), team, S);
+      eq(r.finalGrade, 'E'); eq(r.compaBand, 4); eq(r.calcRaise, 0.20);
+    });
+
+    test('V등급 · 140% 초과 → σ10% + 1% = 11%', () => {
+      const r = E.employeeResult(emp({ salary: 70000000, evaluation: { headRate: 1.25 } }), { rate: 1.25, grade: 'V' }, S);
+      eq(r.finalGrade, 'V'); eq(r.compaBand, 0); eq(r.calcRaise, 0.11);
+    });
+
+    test('P등급: 표의 값이 최종 인상률 — 시장 대비 고연봉자는 연봉 삭감', () => {
+      const team = { rate: 0.5, grade: 'P' };
+      const p = (salary) => E.employeeResult(emp({ salary, evaluation: { headRate: 0.5 } }), team, S);
+      const high = p(70000000);
+      eq(high.finalGrade, 'P'); eq(high.compaBand, 0, '140% 초과');
+      eq(high.calcRaise, -0.03); eq(high.newSalary, 67900000, '3% 삭감');
+      eq(p(65000000).calcRaise, -0.03, '125% ~ 140%');
+      eq(p(50000000).calcRaise, -0.02, '95% ~ 125%');
+      eq(p(44000000).calcRaise, 0, '85% ~ 95% → 동결');
+      eq(p(40000000).calcRaise, 0, '85% 이하 → 동결');
+    });
+
+    test('P등급 절대값 옵션을 끄면 σ 대비 조정, 최저 인상률 하한 적용', () => {
+      const e = emp({ salary: 70000000, evaluation: { headRate: 0.5 } });
+      const team = { rate: 0.5, grade: 'P' };
+      const rel = Object.assign({}, S, { pAbsolute: false });
+      eq(E.employeeResult(e, team, rel).calcRaise, 0, '3% − 3%');
+      const floor = Object.assign({}, S, { minRaise: 0 });
+      eq(E.employeeResult(e, team, floor).calcRaise, 0, '최저 인상률');
+    });
+
+    test('기본 감점 기준: 지각 0.5%p, 초과연차 1%p, 교육미이수 2%p', () => {
+      eq(E.deductionTotal({ late: 1, leave: 0, training: 0 }, S), 0.005);
+      eq(E.deductionTotal({ late: 0, leave: 1, training: 0 }, S), 0.01);
+      eq(E.deductionTotal({ late: 0, leave: 0, training: 1 }, S), 0.02);
+    });
+
+    test('감점: 개인 점수 = KPI 점수 − 감점 합계', () => {
+      const r = E.employeeResult(emp({ evaluation: { headRate: 1.02 }, deductions: { late: 2, leave: 0, training: 1 } }), teamG, S);
+      eq(r.deduction, 0.03); eq(Math.round(r.personalScore * 1e4) / 1e4, 0.99); eq(r.personalGrade, 'N');
+      eq(r.finalGrade, 'N', '팀 G × 개인 N');
+    });
+
+    test('개인 KPI 점수 적용 순서: 최종 → 부문장 → 본인', () => {
+      eq(E.kpiScore({ selfRate: 1.1 }).source, 'self');
+      eq(E.kpiScore({ selfRate: 1.1, headRate: 1.0 }).value, 1.0);
+      eq(E.kpiScore({ selfRate: 1.1, headRate: 1.0, finalRate: 0.95 }).source, 'final');
+      eq(E.kpiScore({}).value, null);
+    });
+
+    test('부사장 조정이 있으면 최종 인상률과 인상 연봉에 반영', () => {
+      const r = E.employeeResult(emp({ vpOverride: 0.1 }), teamG, S);
+      eq(r.calcRaise, 0.07); eq(r.finalRaise, 0.1); eq(r.overridden, true); eq(r.newSalary, 50600088);
+    });
+
+    test('팀 실적이 없으면 산출하지 않음 (엑셀 #DIV/0! 대응)', () => {
+      const r = E.employeeResult(emp(), E.teamResult({}, S), S);
+      eq(r.finalGrade, null); eq(r.calcRaise, null); eq(r.complete, false); eq(r.missing[0], '팀 실적');
+    });
+
+    test('업계평균 시트 범위 밖 직급(부장4, 실장)도 조회', () => {
+      eq(E.marketSalary('부장4', S), 73710000);
+      eq(E.marketSalary('실장1', S), 77395500);
+      eq(E.marketSalary('없는직급', S), null);
+    });
+
+    test('데모 데이터: 110명, 10개 팀, 전원 산출 가능', () => {
+      const st = HR.data.demoState();
+      eq(st.employees.length, 110); eq(st.teams.length, 10);
+      const all = E.evaluateAll(st);
+      eq(st.employees.filter((e) => all.employees[e.id].complete).length, 110);
+      eq(JSON.stringify(HR.data.demoState()) === JSON.stringify(st), true, '시드 고정');
+    });
+
+    const failed = results.filter((r) => !r.ok);
+    document.getElementById('summary').innerHTML = failed.length
+      ? `<span class="bad">${failed.length}개 실패</span> / 전체 ${results.length}개`
+      : `<span class="ok">전체 ${results.length}개 통과</span>`;
+    document.getElementById('out').innerHTML = results.map((r) =>
+      `<li class="${r.ok ? 'ok' : 'bad'}">${r.ok ? '✓' : '✗'} ${r.name}${r.ok ? '' : ` <span class="muted">— ${r.msg}</span>`}</li>`).join('');
+    window.TEST_RESULTS = { total: results.length, failed };
+  </script>
+</body>
+</html>
