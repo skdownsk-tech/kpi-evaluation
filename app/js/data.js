@@ -7,8 +7,8 @@
 
   function defaultSettings() {
     return {
-      cycleName: '2025년 4분기',
-      evalDate: '2025-12-31',
+      cycleName: '2026년 3분기',
+      evalDate: '2026-12-31',
       // 전사 실적마감 (단위: 억원) — 평가표 ② 참고용
       company: { revenueTarget: 1000, revenueActual: 0, profitTarget: 300, profitActual: 0 },
       // 팀 평가 등급 구간 (이상 기준)
